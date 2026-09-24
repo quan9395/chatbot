@@ -53,6 +53,11 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run pytest
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/chatdb
+          GEMINI_API_KEY: test-key
+          GEMINI_MODEL: gemini-3.6-flash
+          APP_ENV: test
         run: python -m pytest -q
         
       - name: Build Docker image
