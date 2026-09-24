@@ -7,3 +7,5 @@ python-dotenv
 alembic
 sqlalchemy
 google-genai
+pytest
+httpx2

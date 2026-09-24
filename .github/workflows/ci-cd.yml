@@ -41,6 +41,20 @@ jobs:
       - name: Check out source code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest -q
+        
       - name: Build Docker image
         run: |
           docker build \
@@ -86,13 +100,9 @@ jobs:
             sleep 2
           done
 
-          echo "Application did not become healthy"
+          echo "failed health check"
           docker logs chatbot-api
           exit 1
-
-      - name: Show container logs
-        if: always()
-        run: docker logs chatbot-api || true
 
       - name: Stop test container
         if: always()
