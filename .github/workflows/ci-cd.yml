@@ -1,0 +1,124 @@
+name: Chatbot CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  LOCAL_IMAGE: chatbot-api:ci
+
+jobs:
+  build-test-push:
+    name: Build, test and publish
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: chatdb
+
+        ports:
+          - 5432:5432
+
+        options: >-
+          --health-cmd "pg_isready -U postgres -d chatdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag "${LOCAL_IMAGE}" \
+            .
+
+      - name: Start chatbot container
+        run: |
+          docker run --detach \
+            --name chatbot-api \
+            --network host \
+            --env DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/chatdb \
+            --env APP_ENV=test \
+            --env GEMINI_API_KEY=test-key \
+            --env GEMINI_MODEL=gemini-3.6-flash \
+            "${LOCAL_IMAGE}"
+
+      - name: Test health endpoint
+        run: |
+          echo "Waiting for chatbot API..."
+
+          for attempt in {1..30}; do
+            if curl --fail --silent \
+              http://127.0.0.1:8000/health \
+              --output health-response.json
+            then
+              echo "Health endpoint responded:"
+              cat health-response.json
+
+              python - <<'PY'
+          import json
+
+          with open("health-response.json", encoding="utf-8") as file:
+              response = json.load(file)
+
+          assert response["status"] == "ok", response
+          print("Health test passed")
+          PY
+              exit 0
+            fi
+
+            echo "Attempt ${attempt}/30 failed; retrying..."
+            sleep 2
+          done
+
+          echo "Application did not become healthy"
+          docker logs chatbot-api
+          exit 1
+
+      - name: Show container logs
+        if: always()
+        run: docker logs chatbot-api || true
+
+      - name: Stop test container
+        if: always()
+        run: docker rm --force chatbot-api || true
+
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag Docker image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker tag "${LOCAL_IMAGE}" \
+            "${{ vars.DOCKERHUB_USERNAME }}/chatbot-api:latest"
+
+          docker tag "${LOCAL_IMAGE}" \
+            "${{ vars.DOCKERHUB_USERNAME }}/chatbot-api:${GITHUB_SHA}"
+
+      - name: Push Docker image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push \
+            "${{ vars.DOCKERHUB_USERNAME }}/chatbot-api:latest"
+
+          docker push \
+            "${{ vars.DOCKERHUB_USERNAME }}/chatbot-api:${GITHUB_SHA}"
