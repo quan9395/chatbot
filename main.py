@@ -35,6 +35,6 @@ app.include_router(chat.router)
 @app.get("/health", tags=["health"])
 async def health():
     return {
-        "status": "ok",
+        "status": "okkk",
         "model": settings.gemini_model,
     }
