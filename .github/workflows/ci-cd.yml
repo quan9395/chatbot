@@ -137,3 +137,96 @@ jobs:
 
           docker push \
             "${{ vars.DOCKERHUB_USERNAME }}/chatbot-api:${GITHUB_SHA}"
+
+  deploy:
+    name: Deploy to EC2
+    needs: build-test-push
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    environment: production
+
+    concurrency:
+      group: chatbot-production
+      cancel-in-progress: false
+
+    env:
+      DEPLOY_IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/chatbot-api:${{ github.sha }}
+
+    steps:
+      - name: Deploy image and check health
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          fingerprint: ${{ secrets.EC2_HOST_FINGERPRINT }}
+          envs: DEPLOY_IMAGE
+          command_timeout: 10m
+
+          script: |
+            set -eu
+            cd "$HOME/chatbot"
+
+            test -f compose.yaml
+            test -f app.env
+
+            PREVIOUS_IMAGE=""
+            if [ -f deployed-image.txt ]; then
+              PREVIOUS_IMAGE="$(cat deployed-image.txt)"
+            fi
+
+            export CHATBOT_IMAGE="$DEPLOY_IMAGE"
+
+            # Download first: a failed pull leaves the old app running.
+            docker compose pull chatbot
+
+            check_health() {
+              attempt=1
+
+              while [ "$attempt" -le 30 ]; do
+                if curl --fail --silent --show-error \
+                  --connect-timeout 2 \
+                  --max-time 5 \
+                  http://127.0.0.1:8000/health \
+                  -o /tmp/chatbot-health.json
+                then
+                  if docker compose exec -T chatbot python -c \
+                    'import json,sys; data=json.load(sys.stdin); sys.exit(0 if data.get("status") == "ok" else 1)' \
+                    < /tmp/chatbot-health.json
+                  then
+                    return 0
+                  fi
+                fi
+
+                sleep 2
+                attempt=$((attempt + 1))
+              done
+
+              return 1
+            }
+
+            if docker compose up -d --no-deps chatbot && check_health; then
+              printf '%s\n' "$DEPLOY_IMAGE" > deployed-image.txt
+              echo "Deployment succeeded"
+            else
+              echo "Deployment failed"
+              docker compose logs --tail=100 chatbot || true
+
+              if [ -n "$PREVIOUS_IMAGE" ]; then
+                echo "Restoring previous image"
+                export CHATBOT_IMAGE="$PREVIOUS_IMAGE"
+                docker compose up -d --no-deps chatbot
+
+                if check_health; then
+                  echo "Rollback succeeded"
+                else
+                  echo "Rollback health check failed"
+                fi
+              fi
+
+              exit 1
+            fi
