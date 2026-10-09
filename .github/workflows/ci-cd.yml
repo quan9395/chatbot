@@ -168,7 +168,7 @@ jobs:
 
           script: |
             set -eu
-            cd "$HOME/chatbot_new"
+            cd "$HOME/new_chatbot"
 
             test -f compose.yaml
             test -f app.env
