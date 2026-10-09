@@ -95,7 +95,7 @@ jobs:
           with open("health-response.json", encoding="utf-8") as file:
               response = json.load(file)
 
-          assert response["status"] == "ok", response
+          assert response["status"] == "okkk", response
           print("Health test passed")
           PY
               exit 0
@@ -194,7 +194,7 @@ jobs:
                   -o /tmp/chatbot-health.json
                 then
                   if docker compose exec -T chatbot python -c \
-                    'import json,sys; data=json.load(sys.stdin); sys.exit(0 if data.get("status") == "ok" else 1)' \
+                    'import json,sys; data=json.load(sys.stdin); sys.exit(0 if data.get("status") == "okkk" else 1)' \
                     < /tmp/chatbot-health.json
                   then
                     return 0
